@@ -1,69 +1,69 @@
-import Image from "next/image";
+import Link from "next/link";
+
+import VideoDurationCalculator from "@/components/video-duration-calculator";
 
 export default function Home() {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex w-full max-w-3xl flex-1 flex-col items-center justify-between bg-white px-16 py-32 sm:items-start dark:bg-black">
-        <Image
-          className="h-5 w-[100px] dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl leading-10 font-semibold tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+    <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-5 sm:px-8 lg:px-12">
+      <header className="flex h-24 items-center justify-between border-b border-stone-200/80">
+        <Link
+          href="/"
+          className="flex items-center gap-3 rounded-md"
+          aria-label="视频总时长计算器首页"
+        >
+          <span className="flex size-9 items-center justify-center rounded-xl bg-emerald-800 text-white">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect
+                x="3"
+                y="5"
+                width="18"
+                height="14"
+                rx="3"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              />
+              <path
+                d="M7 5v14M17 5v14M3 10h4M3 14h4M17 10h4M17 14h4"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              />
+              <path d="m10 9 5 3-5 3V9Z" fill="currentColor" />
+            </svg>
+          </span>
+          <span className="text-lg font-semibold tracking-tight">
+            时长
+            <span className="ml-2 text-xs font-normal tracking-widest text-stone-400">
+              / VIDEO DURATION
+            </span>
+          </span>
+        </Link>
+        <span className="hidden items-center gap-2 text-xs text-stone-500 sm:flex">
+          <span className="size-1.5 rounded-full bg-emerald-700" />
+          本地处理，安心使用
+        </span>
+      </header>
+
+      <main className="flex-1 py-10 sm:py-14">
+        <div className="mb-9 sm:mb-11">
+          <p className="mb-4 text-xs font-medium tracking-[0.2em] text-emerald-800">
+            简单一点 · 时间清楚一点
+          </p>
+          <h1 className="text-[28px] leading-tight font-semibold tracking-tight sm:text-4xl">
+            视频总时长计算器
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="mt-4 max-w-xl text-sm leading-7 text-stone-500">
+            一次选择或分多次添加视频，
+            <br className="sm:hidden" />
+            在浏览器本地快速计算所有视频的总时长。
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] md:w-[158px] dark:hover:bg-[#ccc]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="h-[14px] w-4 dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] md:w-[158px] dark:border-white/[.145] dark:hover:bg-[#1a1a1a]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+        <VideoDurationCalculator />
       </main>
+
+      <footer className="flex flex-col gap-3 border-t border-stone-200/80 py-6 text-xs text-stone-500 sm:flex-row sm:items-center sm:justify-between">
+        <p>只计算时间，不打扰你的文件。</p>
+        <p className="text-stone-400">无需上传 · 无需注册 · 免费使用</p>
+      </footer>
     </div>
   );
 }

@@ -4,13 +4,21 @@ import { createRequire } from "node:module";
 import { afterEach, test } from "node:test";
 
 const ts = createRequire(import.meta.url)("typescript");
-const source = readFileSync(new URL("../lib/video-duration.ts", import.meta.url), "utf8");
-const { outputText } = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
-});
-const { formatDuration, getVideoDuration, isVideoFile, VIDEO_ACCEPT } = await import(
-  `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`
+function transpile(path) {
+  return ts.transpileModule(readFileSync(new URL(path, import.meta.url), "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+}
+function moduleUrl(source) {
+  return `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
+}
+const { formatDuration, formatFileSize } = await import(moduleUrl(transpile("../lib/format.ts")));
+const containerUrl = moduleUrl(transpile("../lib/video-container.ts"));
+const source = transpile("../lib/video-duration.ts").replaceAll(
+  '"@/lib/video-container"',
+  JSON.stringify(containerUrl),
 );
+const { getVideoDuration, isVideoFile, VIDEO_ACCEPT } = await import(moduleUrl(source));
 
 const originalDocument = globalThis.document;
 const originalWindow = globalThis.window;
@@ -89,8 +97,15 @@ function setup(t) {
 test("formats seconds, rounding boundaries and hours beyond 24", () => {
   for (const [seconds, expected] of [
     [0, "00:00:00"],
+    [1, "00:00:01"],
+    [59, "00:00:59"],
+    [60, "00:01:00"],
     [65, "00:01:05"],
     [3661, "01:01:01"],
+    [3599, "00:59:59"],
+    [3600, "01:00:00"],
+    [86400, "24:00:00"],
+    [90000, "25:00:00"],
     [36309, "10:05:09"],
     [97200, "27:00:00"],
     [360000, "100:00:00"],
@@ -99,6 +114,18 @@ test("formats seconds, rounding boundaries and hours beyond 24", () => {
     [0.4 + 0.4, "00:00:01"],
   ]) {
     assert.equal(formatDuration(seconds), expected);
+  }
+});
+
+test("formats file sizes consistently at unit boundaries", () => {
+  for (const [bytes, expected] of [
+    [0, "0 B"],
+    [1023, "1023 B"],
+    [1024, "1.0 KB"],
+    [1024 ** 2, "1.0 MB"],
+    [1024 ** 3, "1.00 GB"],
+  ]) {
+    assert.equal(formatFileSize(bytes), expected);
   }
 });
 
@@ -119,7 +146,6 @@ test("a failed file does not prevent another file from succeeding", async (t) =>
   env.videos[1].dispatchEvent(new Event("loadedmetadata"));
   const results = await Promise.allSettled(readings);
   assert.equal(results[0].status, "rejected");
-  assert.match(results[0].reason.message, /无法读取/);
   assert.equal(results[0].reason.code, "unreadable");
   assert.deepEqual(results[1], { status: "fulfilled", value: 3661 });
   env.assertCleaned();
@@ -162,6 +188,57 @@ test("metadata timeout rejects and releases resources", async (t) => {
   const timeout = env.timers.values().next().value;
   timeout();
   await assert.rejects(reading, { code: "timeout" });
+  env.assertCleaned();
+});
+
+test("reset failures still settle the read and release every resource", async (t) => {
+  const env = setup(t);
+  for (const eventName of ["loadedmetadata", "error"]) {
+    const reading = getVideoDuration(env.file);
+    const video = env.videos.at(-1);
+    const reset = video.load.bind(video);
+    video.load = () => {
+      reset();
+      throw new Error("Media element reset failed");
+    };
+    video.duration = 65;
+    video.dispatchEvent(new Event(eventName));
+    await assert.rejects(reading, { code: "unreadable" });
+    // Late events must not settle the promise or revoke the URL a second time.
+    video.dispatchEvent(new Event("loadedmetadata"));
+    video.dispatchEvent(new Event("error"));
+  }
+  env.assertCleaned();
+});
+
+test("source assignment failures release the object URL", async (t) => {
+  const env = setup(t);
+  const createElement = document.createElement.bind(document);
+  document.createElement = (name) => {
+    const video = createElement(name);
+    let src = "";
+    Object.defineProperty(video, "src", {
+      get: () => src,
+      set: (value) => {
+        if (value) throw new Error("Cannot attach media source");
+        src = value;
+      },
+    });
+    return video;
+  };
+  await assert.rejects(getVideoDuration(env.file), { code: "unreadable" });
+  env.assertCleaned();
+});
+
+test("aborting after completion does not repeat resource cleanup", async (t) => {
+  const env = setup(t);
+  const controller = new AbortController();
+  const reading = getVideoDuration(env.file, controller.signal);
+  env.videos[0].duration = 1;
+  env.videos[0].dispatchEvent(new Event("loadedmetadata"));
+  assert.equal(await reading, 1);
+  controller.abort();
+  env.videos[0].dispatchEvent(new Event("error"));
   env.assertCleaned();
 });
 
@@ -317,7 +394,7 @@ test("malformed container metadata falls back to native reading and cleans resou
     await new Promise((resolve) => setImmediate(resolve));
   assert.equal(env.videos.length, 1);
   env.videos[0].dispatchEvent(new Event("error"));
-  await assert.rejects(reading, /缺少有效时长元数据/);
+  await assert.rejects(reading, { code: "unreadable" });
   env.assertCleaned();
 });
 
@@ -386,7 +463,7 @@ test("RMVB rejects invalid, truncated and missing duration metadata", async (t) 
     }
     assert.equal(env.videos.length, expectedVideos);
     env.videos.at(-1).dispatchEvent(new Event("error"));
-    await assert.rejects(reading, /缺少有效时长元数据/);
+    await assert.rejects(reading, { code: "unreadable" });
   }
   env.assertCleaned();
 });

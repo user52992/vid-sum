@@ -2,83 +2,23 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import VideoFileList from "@/components/video-file-list";
+import VideoIcon from "@/components/video-icon";
+import { formatDuration } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import { messages } from "@/lib/i18n";
-import type { VideoReadErrorCode } from "@/lib/video-duration";
+import type { VideoFileItem, VideoReadState } from "@/lib/video-duration";
 import {
-  formatDuration,
   getVideoDuration,
   isVideoFile,
   VIDEO_ACCEPT,
   VideoDurationError,
 } from "@/lib/video-duration";
 
-type VideoFileItem = {
-  id: string;
-  file: File;
-  duration?: number;
-  status: "pending" | "loading" | "success" | "error";
-  error?: VideoReadErrorCode;
-};
-type Result = { duration: number; success: number; failed: number };
-type IconName = "upload" | "file" | "clock" | "lock" | "arrow" | "close";
-
-function Icon({ name, className = "size-5" }: { name: IconName; className?: string }) {
-  const paths: Record<IconName, React.ReactNode> = {
-    upload: (
-      <>
-        <path d="M12 16V3m-5 5 5-5 5 5" />
-        <path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
-      </>
-    ),
-    file: (
-      <>
-        <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6Z" />
-        <path d="M14 3v6h6m-10 3 5 3-5 3v-6Z" />
-      </>
-    ),
-    clock: (
-      <>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 7v5l3 2" />
-      </>
-    ),
-    lock: (
-      <>
-        <rect x="5" y="10" width="14" height="11" rx="2" />
-        <path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2" />
-      </>
-    ),
-    arrow: <path d="M4 12h16m-6-6 6 6-6 6" />,
-    close: <path d="m6 6 12 12M6 18 18 6" />,
-  };
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {paths[name]}
-    </svg>
-  );
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-}
-
 export default function VideoDurationCalculator({ locale }: { locale: Locale }) {
   const t = messages[locale];
   const [items, setItems] = useState<VideoFileItem[]>([]);
-  const [result, setResult] = useState<Result | null>(null);
+  const [hasCalculated, setHasCalculated] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [skippedFiles, setSkippedFiles] = useState(0);
@@ -109,14 +49,14 @@ export default function VideoDurationCalculator({ locale }: { locale: Locale }) 
       status: "pending",
     }));
     setItems((current) => [...current, ...additions]);
-    setResult(null);
+    setHasCalculated(false);
   }
 
-  function clear() {
+  function clearVideos() {
     calculation.current?.abort();
     calculation.current = null;
     setItems([]);
-    setResult(null);
+    setHasCalculated(false);
     setIsCalculating(false);
     setSkippedFiles(0);
     setIsDragging(false);
@@ -127,48 +67,45 @@ export default function VideoDurationCalculator({ locale }: { locale: Locale }) 
   function removeFile(id: string) {
     if (calculation.current) return;
     setItems((current) => current.filter((item) => item.id !== id));
-    setResult(null);
+    setHasCalculated(false);
   }
 
-  async function calculate() {
+  async function calculateTotalDuration() {
     if (!items.length || calculation.current) return;
     const controller = new AbortController();
     calculation.current = controller;
     setIsCalculating(true);
-    setResult(null);
+    setHasCalculated(false);
     setSkippedFiles(0);
     const snapshot = items.slice();
-    const totals: Result = { duration: 0, success: 0, failed: 0 };
+    // Keep successful reads cached, but reset failures before retrying for stable progress.
+    setItems((current) =>
+      current.map((item) =>
+        item.status === "success" ? item : { id: item.id, file: item.file, status: "pending" },
+      ),
+    );
     let cursor = 0;
 
-    function updateItem(id: string, changes: Partial<VideoFileItem>) {
+    function updateItem(id: string, state: VideoReadState) {
       if (calculation.current !== controller) return;
       setItems((current) =>
-        current.map((item) => (item.id === id ? { ...item, ...changes } : item)),
+        current.map((item) => (item.id === id ? { id: item.id, file: item.file, ...state } : item)),
       );
     }
 
     async function worker() {
       while (cursor < snapshot.length && !controller.signal.aborted) {
         const item = snapshot[cursor++];
-        if (item.status === "success" && item.duration !== undefined) {
-          totals.duration += item.duration;
-          totals.success++;
-          continue;
-        }
-        updateItem(item.id, { status: "loading", error: undefined });
+        if (item.status === "success") continue;
+        updateItem(item.id, { status: "loading" });
         try {
           const duration = await getVideoDuration(item.file, controller.signal);
           if (controller.signal.aborted) return;
-          totals.duration += duration;
-          totals.success++;
           updateItem(item.id, { status: "success", duration });
         } catch (error) {
           if (controller.signal.aborted) return;
-          totals.failed++;
           updateItem(item.id, {
             status: "error",
-            duration: undefined,
             error: error instanceof VideoDurationError ? error.code : "unreadable",
           });
         }
@@ -176,8 +113,9 @@ export default function VideoDurationCalculator({ locale }: { locale: Locale }) 
     }
 
     try {
+      // Four workers bound resource use without opening every video at once.
       await Promise.all(Array.from({ length: Math.min(4, snapshot.length) }, worker));
-      if (calculation.current === controller) setResult(totals);
+      if (calculation.current === controller) setHasCalculated(true);
     } finally {
       if (calculation.current === controller) {
         calculation.current = null;
@@ -186,10 +124,16 @@ export default function VideoDurationCalculator({ locale }: { locale: Locale }) 
     }
   }
 
-  const completed = items.filter(
-    (item) => item.status === "success" || item.status === "error",
-  ).length;
-  const totalSize = items.reduce((sum, item) => sum + item.file.size, 0);
+  const successfulVideos = items.filter((item) => item.status === "success");
+  const failedCount = items.filter((item) => item.status === "error").length;
+  const completedCount = successfulVideos.length + failedCount;
+  const totalDuration = successfulVideos.reduce((sum, item) => sum + item.duration, 0);
+  const formattedDuration = formatDuration(hasCalculated ? totalDuration : 0);
+  const resultMessage = isCalculating
+    ? t.progress(completedCount, items.length)
+    : hasCalculated
+      ? t.summary(successfulVideos.length, failedCount)
+      : null;
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
@@ -217,6 +161,7 @@ export default function VideoDurationCalculator({ locale }: { locale: Locale }) 
           disabled={isCalculating}
           onChange={(event) => {
             addFiles(Array.from(event.currentTarget.files ?? []));
+            // Selecting the same file again must still fire change, including after clearing.
             event.currentTarget.value = "";
           }}
         />
@@ -253,7 +198,7 @@ export default function VideoDurationCalculator({ locale }: { locale: Locale }) 
             className="group flex min-h-60 w-full flex-col items-center justify-center rounded-xl px-4 py-7 transition-colors hover:bg-emerald-50/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className="mb-5 flex size-14 items-center justify-center rounded-2xl border border-stone-200/80 bg-white text-emerald-800 shadow-sm transition-transform group-hover:-translate-y-1">
-              <Icon name="upload" className="size-6" />
+              <VideoIcon name="upload" className="size-6" />
             </span>
             <span className="text-sm font-medium">{isDragging ? t.dropHere : t.chooseOrDrop}</span>
             <span id="upload-hint" className="mt-2 text-xs leading-6 text-stone-500">
@@ -272,75 +217,12 @@ export default function VideoDurationCalculator({ locale }: { locale: Locale }) 
           </p>
         )}
 
-        <div className="mt-7 flex items-center justify-between gap-3 border-b border-stone-100 pb-4">
-          <h3 className="text-sm font-medium">
-            {t.addedVideos}{" "}
-            <span className="ml-1.5 rounded-md bg-stone-100 px-2 py-0.5 font-mono text-xs text-stone-500">
-              {items.length}
-            </span>
-          </h3>
-          <span className="text-xs text-stone-500">
-            {items.length ? t.totalSize(formatFileSize(totalSize)) : t.waitingForFiles}
-          </span>
-        </div>
-        {items.length === 0 ? (
-          <div className="flex min-h-36 flex-col items-center justify-center gap-2 text-stone-500">
-            <Icon name="file" className="mb-1 size-7 text-stone-300" />
-            <p className="text-xs">{t.emptyTitle}</p>
-            <p className="text-[11px] text-stone-400">{t.emptyHint}</p>
-          </div>
-        ) : (
-          <ul aria-label={t.listLabel} className="max-h-80 overflow-y-auto overscroll-contain pr-1">
-            {items.map((item) => (
-              <li key={item.id} className="border-b border-stone-100 py-4 last:border-0">
-                <div className="flex items-center gap-3">
-                  <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-stone-50 text-stone-500">
-                    <Icon name="file" className="size-5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p title={item.file.name} className="truncate text-xs font-medium">
-                      {item.file.name}
-                    </p>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-stone-500">
-                      <span className="font-mono">{formatFileSize(item.file.size)}</span>
-                      <span aria-hidden="true">·</span>
-                      <span
-                        className={
-                          item.status === "error"
-                            ? "text-amber-800"
-                            : item.status === "success"
-                              ? "text-emerald-800"
-                              : ""
-                        }
-                      >
-                        {t.statuses[item.status]}
-                      </span>
-                      {item.duration !== undefined && (
-                        <span className="font-mono text-emerald-800">
-                          {formatDuration(item.duration)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeFile(item.id)}
-                    disabled={isCalculating}
-                    aria-label={t.removeLabel(item.file.name)}
-                    className="flex size-11 shrink-0 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    <Icon name="close" className="size-4" />
-                  </button>
-                </div>
-                {item.error && (
-                  <p className="mt-2 pl-[52px] text-[11px] leading-5 text-amber-800">
-                    {t.errors[item.error]}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+        <VideoFileList
+          items={items}
+          locale={locale}
+          disabled={isCalculating}
+          onRemove={removeFile}
+        />
       </section>
 
       <aside className="min-w-0 lg:sticky lg:top-8" aria-label={t.resultLabel}>
@@ -353,38 +235,32 @@ export default function VideoDurationCalculator({ locale }: { locale: Locale }) 
           </div>
           <div className="mt-10 text-center" aria-live="polite" aria-atomic="true" role="status">
             <p className="mb-4 flex items-center justify-center gap-1.5 text-xs text-emerald-900/70">
-              <Icon name="clock" className="size-3.5" />
+              <VideoIcon name="clock" className="size-3.5" />
               {t.totalDuration}
             </p>
             <p
-              aria-label={t.durationLabel(formatDuration(result?.duration ?? 0))}
-              className={`overflow-x-auto font-mono text-[clamp(2rem,8vw,3rem)] leading-tight font-medium tracking-[-0.06em] tabular-nums sm:text-5xl ${result ? "text-emerald-950" : "text-[#81988a]"}`}
+              aria-label={t.durationLabel(formattedDuration)}
+              className={`overflow-x-auto font-mono text-[clamp(2rem,8vw,3rem)] leading-tight font-medium tracking-[-0.06em] tabular-nums sm:text-5xl ${hasCalculated ? "text-emerald-950" : "text-[#81988a]"}`}
             >
-              {formatDuration(result?.duration ?? 0)}
+              {formattedDuration}
             </p>
-            {(isCalculating || result) && (
-              <p className="mt-4 text-xs leading-6 text-emerald-900/75">
-                {isCalculating
-                  ? t.progress(completed, items.length)
-                  : result
-                    ? t.summary(result.success, result.failed)
-                    : null}
-              </p>
+            {resultMessage && (
+              <p className="mt-4 text-xs leading-6 text-emerald-900/75">{resultMessage}</p>
             )}
           </div>
           <div className="mt-6 border-t border-emerald-900/10 pt-6">
             <button
               type="button"
-              onClick={calculate}
+              onClick={calculateTotalDuration}
               disabled={!items.length || isCalculating}
               className="flex min-h-12 w-full items-center justify-center gap-3 rounded-lg bg-emerald-800 px-4 text-sm font-medium text-white transition-[background-color,transform] hover:bg-emerald-900 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-[#cbd8ce] disabled:text-[#526b5a]"
             >
               {isCalculating ? t.calculating : t.calculate}
-              {!isCalculating && <Icon name="arrow" className="size-4" />}
+              {!isCalculating && <VideoIcon name="arrow" className="size-4" />}
             </button>
             <button
               type="button"
-              onClick={clear}
+              onClick={clearVideos}
               disabled={!items.length}
               className="mt-3 min-h-11 w-full rounded-lg text-xs font-medium text-stone-600 transition-colors hover:bg-white/60 disabled:cursor-not-allowed disabled:text-stone-400"
             >
@@ -393,7 +269,7 @@ export default function VideoDurationCalculator({ locale }: { locale: Locale }) 
           </div>
         </section>
         <div className="mt-6 flex items-start gap-2 px-2 text-[11px] leading-5 text-stone-500">
-          <Icon name="lock" className="mt-0.5 size-3.5 shrink-0 text-emerald-800" />
+          <VideoIcon name="lock" className="mt-0.5 size-3.5 shrink-0 text-emerald-800" />
           <p>{t.privacy}</p>
         </div>
       </aside>

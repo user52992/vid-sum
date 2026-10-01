@@ -33,3 +33,14 @@ If the execution environment prevents Turbopack from binding its internal port, 
 The picker and drag-and-drop area accept common video extensions. MOV, AVI, FLV and RMVB/RM can read duration from container metadata without decoding video. Other formats use the browser's native video metadata support. Missing or invalid duration information is shown as a file error; successful files are still included in the total.
 
 Reads are limited to four concurrent files. Container parsing uses bounded metadata slices, skips encoded video data and supports cancellation. Native reads use `preload="metadata"`, never play the video, and always release object URLs. Durations are summed before rounding once to the nearest second; hours continue above 24.
+
+Files are appended without deduplication, so adding the same file twice counts it twice. Successful duration reads are cached for subsequent calculations; failed reads can be retried. Adding or removing files hides the previous total. Clearing cancels in-flight reads and resets the picker.
+
+## Code organization
+
+- `app/[locale]`: server-rendered page, language navigation and metadata.
+- `components/video-duration-calculator.tsx`: file state, picker, cancellation and calculation.
+- `components/video-file-list.tsx`: file rows, read status and removal controls.
+- `lib/video-duration.ts`: shared read states, file acceptance and browser metadata lifecycle.
+- `lib/video-container.ts`: bounded MOV, AVI, FLV and RealMedia header parsing.
+- `lib/format.ts`: duration and file-size formatting.

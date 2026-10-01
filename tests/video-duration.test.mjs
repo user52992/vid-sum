@@ -8,7 +8,7 @@ const source = readFileSync(new URL("../lib/video-duration.ts", import.meta.url)
 const { outputText } = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 });
-const { formatDuration, getVideoDuration } = await import(
+const { formatDuration, getVideoDuration, isVideoFile, VIDEO_ACCEPT } = await import(
   `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`
 );
 
@@ -162,4 +162,244 @@ test("metadata timeout rejects and releases resources", async (t) => {
   timeout();
   await assert.rejects(reading, /读取超时/);
   env.assertCleaned();
+});
+
+function atom(type, payload, extended = false) {
+  const header = Buffer.alloc(extended ? 16 : 8);
+  header.writeUInt32BE(extended ? 1 : payload.length + 8);
+  header.write(type, 4);
+  if (extended) header.writeBigUInt64BE(BigInt(payload.length + 16), 8);
+  return Buffer.concat([header, payload]);
+}
+
+function riffChunk(type, payload) {
+  const header = Buffer.alloc(8);
+  header.write(type);
+  header.writeUInt32LE(payload.length, 4);
+  return Buffer.concat([header, payload, Buffer.alloc(payload.length % 2)]);
+}
+
+function aviFixture(openDmlFrames = 0) {
+  const main = Buffer.alloc(56);
+  main.writeUInt32LE(33333);
+  main.writeUInt32LE(1800, 16);
+  const stream = Buffer.alloc(56);
+  stream.write("vids");
+  stream.writeUInt32LE(1001, 20);
+  stream.writeUInt32LE(30000, 24);
+  stream.writeUInt32LE(1800, 32);
+  const chunks = [
+    riffChunk("avih", main),
+    riffChunk("LIST", Buffer.concat([Buffer.from("strl"), riffChunk("strh", stream)])),
+  ];
+  if (openDmlFrames) {
+    const extended = Buffer.alloc(248);
+    extended.writeUInt32LE(openDmlFrames);
+    chunks.push(
+      riffChunk("LIST", Buffer.concat([Buffer.from("odml"), riffChunk("dmlh", extended)])),
+    );
+  }
+  return riffChunk(
+    "RIFF",
+    Buffer.concat([
+      Buffer.from("AVI "),
+      riffChunk("LIST", Buffer.concat([Buffer.from("hdrl"), ...chunks])),
+      riffChunk("LIST", Buffer.concat([Buffer.from("movi"), Buffer.alloc(1_000_000)])),
+    ]),
+  );
+}
+
+function flvFixture(duration = 65.25, array = true) {
+  const header = Buffer.from([0x46, 0x4c, 0x56, 1, 5, 0, 0, 0, 9, 0, 0, 0, 0]);
+  const number = Buffer.alloc(9);
+  number.writeDoubleBE(duration, 1);
+  const metadata = Buffer.concat([
+    Buffer.from([2, 0, 10]),
+    Buffer.from("onMetaData"),
+    array ? Buffer.from([8, 0, 0, 0, 1]) : Buffer.from([3]),
+    Buffer.from([0, 8]),
+    Buffer.from("duration"),
+    number,
+    Buffer.from([0, 0, 9]),
+  ]);
+  function tag(type, payload) {
+    const tagHeader = Buffer.alloc(11);
+    tagHeader[0] = type;
+    tagHeader.writeUIntBE(payload.length, 1, 3);
+    const previousSize = Buffer.alloc(4);
+    previousSize.writeUInt32BE(payload.length + 11);
+    return Buffer.concat([tagHeader, payload, previousSize]);
+  }
+  // Metadata after a video tag verifies that the reader jumps over media bytes.
+  return Buffer.concat([header, tag(9, Buffer.alloc(1_000_000)), tag(18, metadata)]);
+}
+
+async function assertMetadataOnly(binary, name, expected) {
+  const file = new File([binary], name, { type: "application/octet-stream" });
+  const ranges = [];
+  const slice = file.slice.bind(file);
+  file.arrayBuffer = () => {
+    throw new Error("Must not read the complete file");
+  };
+  file.slice = (start, end) => {
+    ranges.push([start, end]);
+    assert.ok(end - start <= 256 * 1024);
+    return slice(start, end);
+  };
+  assert.ok(Math.abs((await getVideoDuration(file)) - expected) < 1e-8);
+  assert.ok(ranges.reduce((total, [start, end]) => total + end - start, 0) < 1024);
+}
+
+test("accepts common video extensions despite missing or generic MIME types", () => {
+  for (const extension of [
+    "mov",
+    "flv",
+    "avi",
+    "rmvb",
+    "rm",
+    "mkv",
+    "wmv",
+    "mp4",
+    "webm",
+    "f4v",
+    "mts",
+    "vob",
+  ]) {
+    assert.ok(VIDEO_ACCEPT.split(",").includes(`.${extension}`));
+    for (const type of ["", "application/octet-stream", "application/x-unknown"]) {
+      assert.ok(isVideoFile({ name: `video.${extension.toUpperCase()}`, type }));
+    }
+  }
+  assert.ok(isVideoFile({ name: "unusual-format", type: "video/x-custom" }));
+  assert.ok(!isVideoFile({ name: "notes.txt", type: "text/plain" }));
+  assert.ok(!isVideoFile({ name: "movie.mp4.exe", type: "application/octet-stream" }));
+  assert.ok(!isVideoFile({ name: "mov", type: "" }));
+});
+
+test("MOV reads a movie header after media data without a browser decoder", async () => {
+  const movie = Buffer.alloc(100);
+  movie.writeUInt32BE(1000, 12);
+  movie.writeUInt32BE(97200250, 16);
+  const binary = Buffer.concat([
+    atom("mdat", Buffer.alloc(1_000_000)),
+    atom("moov", atom("mvhd", movie)),
+  ]);
+  await assertMetadataOnly(binary, "sample.MOV", 97200.25);
+});
+
+test("MOV supports extended atom sizes and version 1 duration headers", async () => {
+  const movie = Buffer.alloc(112);
+  movie[0] = 1;
+  movie.writeUInt32BE(1000, 20);
+  movie.writeBigUInt64BE(BigInt(360000250), 24);
+  await assertMetadataOnly(atom("moov", atom("mvhd", movie, true), true), "large.mov", 360000.25);
+});
+
+test("AVI uses fractional frame rates without loading its movi payload", async () => {
+  await assertMetadataOnly(aviFixture(), "sample.AVI", 60.06);
+});
+
+test("OpenDML AVI uses the complete frame count", async () => {
+  await assertMetadataOnly(aviFixture(3_000_000), "extended.avi", 100100);
+});
+
+test("FLV reads onMetaData.duration in ECMA arrays and objects", async () => {
+  await assertMetadataOnly(flvFixture(65.25), "sample.FLV", 65.25);
+  await assertMetadataOnly(flvFixture(3661.75, false), "object.flv", 3661.75);
+});
+
+test("malformed container metadata falls back to native reading and cleans resources", async (t) => {
+  const env = setup(t);
+  const reading = getVideoDuration(new File(["broken"], "broken.flv"));
+  // Local Blob reads yield before the browser fallback is set up.
+  for (let attempt = 0; attempt < 20 && !env.videos.length; attempt++)
+    await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(env.videos.length, 1);
+  env.videos[0].dispatchEvent(new Event("error"));
+  await assert.rejects(reading, /缺少有效时长元数据/);
+  env.assertCleaned();
+});
+
+test("cancellation during container metadata reads prevents native fallback", async () => {
+  const file = new File([aviFixture()], "cancelled.avi");
+  const controller = new AbortController();
+  const slice = file.slice.bind(file);
+  let reads = 0;
+  file.slice = (start, end) => {
+    reads++;
+    controller.abort();
+    return slice(start, end);
+  };
+  await assert.rejects(getVideoDuration(file, controller.signal), { name: "AbortError" });
+  assert.equal(reads, 1);
+});
+
+function realMediaFixture(duration, streamDurations = [], headerSize = 18) {
+  function chunk(type, payload) {
+    const header = Buffer.alloc(10);
+    header.write(type);
+    header.writeUInt32BE(payload.length + 10, 4);
+    return Buffer.concat([header, payload]);
+  }
+  const fileHeader = chunk(".RMF", Buffer.alloc(headerSize - 10));
+  const properties = Buffer.alloc(40);
+  properties.writeUInt32BE(duration, 20);
+  const streams = streamDurations.map((duration) => {
+    const data = Buffer.alloc(36);
+    data.writeUInt32BE(duration, 26);
+    // Empty stream name, MIME type and codec data follow the fixed fields.
+    return chunk("MDPR", data);
+  });
+  return Buffer.concat([
+    fileHeader,
+    chunk("CONT", Buffer.alloc(8)),
+    chunk("PROP", properties),
+    ...streams,
+    chunk("DATA", Buffer.alloc(1_000_000)),
+  ]);
+}
+
+test("RMVB reads millisecond PROP duration without loading video packets", async () => {
+  await assertMetadataOnly(realMediaFixture(97200250), "sample.RMVB", 97200.25);
+  await assertMetadataOnly(realMediaFixture(3661750), "sample.rm", 3661.75);
+});
+
+test("RMVB supports compact RealMedia file headers", async () => {
+  await assertMetadataOnly(realMediaFixture(65250, [], 16), "compact.rmvb", 65.25);
+});
+
+test("RMVB falls back to the longest MDPR stream when PROP duration is missing", async () => {
+  await assertMetadataOnly(realMediaFixture(0, [65250, 66500]), "streams.rmvb", 66.5);
+});
+
+test("RMVB rejects invalid, truncated and missing duration metadata", async (t) => {
+  const env = setup(t);
+  const invalid = realMediaFixture(65250);
+  invalid.write("FAKE", 0);
+  const truncated = realMediaFixture(65250).subarray(0, 40);
+  for (const binary of [invalid, truncated, realMediaFixture(0)]) {
+    const reading = getVideoDuration(new File([binary], "broken.rmvb"));
+    const expectedVideos = env.videos.length + 1;
+    for (let attempt = 0; attempt < 20 && env.videos.length < expectedVideos; attempt++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(env.videos.length, expectedVideos);
+    env.videos.at(-1).dispatchEvent(new Event("error"));
+    await assert.rejects(reading, /缺少有效时长元数据/);
+  }
+  env.assertCleaned();
+});
+
+test("cancelling RMVB metadata reads releases the batch without native fallback", async () => {
+  const file = new File([realMediaFixture(65250)], "cancelled.rmvb");
+  const controller = new AbortController();
+  const slice = file.slice.bind(file);
+  let reads = 0;
+  file.slice = (start, end) => {
+    reads++;
+    controller.abort();
+    return slice(start, end);
+  };
+  await assert.rejects(getVideoDuration(file, controller.signal), { name: "AbortError" });
+  assert.equal(reads, 1);
 });

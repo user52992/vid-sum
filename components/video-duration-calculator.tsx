@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { formatDuration, getVideoDuration } from "@/lib/video-duration";
+import { formatDuration, getVideoDuration, isVideoFile, VIDEO_ACCEPT } from "@/lib/video-duration";
 
 type VideoFileItem = {
   id: string;
@@ -97,14 +97,7 @@ export default function VideoDurationCalculator() {
 
   function addFiles(files: File[]) {
     if (calculation.current) return;
-    const videos = files.filter(
-      (file) =>
-        file.type.startsWith("video/") ||
-        (!file.type &&
-          /\.(mp4|m4v|mov|webm|mkv|avi|wmv|mpg|mpeg|ogv|ogg|3gp|3g2|mts|m2ts|ts|flv)$/i.test(
-            file.name,
-          )),
-    );
+    const videos = files.filter(isVideoFile);
     const skipped = files.length - videos.length;
     setNotice(skipped ? `已忽略 ${skipped} 个非视频文件，请选择视频文件。` : "");
     if (!videos.length) return;
@@ -215,7 +208,7 @@ export default function VideoDurationCalculator() {
           ref={inputRef}
           id="video-files"
           type="file"
-          accept="video/*"
+          accept={VIDEO_ACCEPT}
           multiple
           className="sr-only"
           tabIndex={-1}
@@ -272,7 +265,10 @@ export default function VideoDurationCalculator() {
           </button>
         </div>
         <p className="mt-3 text-center text-[11px] leading-5 text-stone-500">
-          支持 MP4、MOV、WebM 等格式，具体取决于浏览器支持
+          可添加 MP4、MOV、FLV、AVI、RMVB、MKV、WebM 等视频
+        </p>
+        <p className="mt-1 text-center text-[11px] leading-5 text-stone-500">
+          MOV、FLV、AVI、RMVB 可直接读取文件头；缺少有效时长信息的文件会提示失败
         </p>
         {notice && (
           <p

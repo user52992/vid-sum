@@ -1,36 +1,35 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# VidSum
 
-## Getting Started
+A local video duration calculator built with Next.js, React, TypeScript and Tailwind CSS. Videos, filenames and durations never leave the browser. No accounts, database or upload API.
 
-First, run the development server:
+## Development
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
+```sh
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`/` redirects to `/en` by default. `/en` is English and `/zh` is Simplified Chinese. Use the language switch in the top-right corner to change routes. Both pages are statically generated, including their localized text and metadata.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## SEO
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The public origin defaults to `https://vid-sum.vercel.app`. Each language has its own title, description, canonical URL, Open Graph / Twitter metadata and WebApplication structured data. Both pages publish reciprocal `en`, `zh` and `x-default` language links. `/sitemap.xml` lists the two language routes; `/robots.txt` references that sitemap.
 
-## Learn More
+For a custom domain, copy `.env.example` to `.env.local`, change `SITE_URL` to the new public origin, then rebuild. The origin must include `https://` (or `http://` for local development) and must not contain a path, query or fragment.
 
-To learn more about Next.js, take a look at the following resources:
+## Checks
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```sh
+pnpm lint:check
+pnpm build
+pnpm exec tsc --noEmit
+node --test tests/*.test.mjs
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+If the execution environment prevents Turbopack from binding its internal port, use `pnpm build --webpack`. Run the build before tests: SEO output tests inspect the generated HTML, sitemap and route manifests.
 
-## Deploy on Vercel
+## Video formats
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The picker and drag-and-drop area accept common video extensions. MOV, AVI, FLV and RMVB/RM can read duration from container metadata without decoding video. Other formats use the browser's native video metadata support. Missing or invalid duration information is shown as a file error; successful files are still included in the total.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Reads are limited to four concurrent files. Container parsing uses bounded metadata slices, skips encoded video data and supports cancellation. Native reads use `preload="metadata"`, never play the video, and always release object URLs. Durations are summed before rounding once to the nearest second; hours continue above 24.

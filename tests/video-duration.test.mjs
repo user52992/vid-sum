@@ -120,6 +120,7 @@ test("a failed file does not prevent another file from succeeding", async (t) =>
   const results = await Promise.allSettled(readings);
   assert.equal(results[0].status, "rejected");
   assert.match(results[0].reason.message, /无法读取/);
+  assert.equal(results[0].reason.code, "unreadable");
   assert.deepEqual(results[1], { status: "fulfilled", value: 3661 });
   env.assertCleaned();
 });
@@ -131,7 +132,7 @@ test("rejects infinite, NaN and negative durations and releases resources", asyn
     const video = env.videos.at(-1);
     video.duration = duration;
     video.dispatchEvent(new Event("loadedmetadata"));
-    await assert.rejects(reading, /有效时长/);
+    await assert.rejects(reading, { code: "invalid-duration" });
   }
   env.assertCleaned();
 });
@@ -160,7 +161,7 @@ test("metadata timeout rejects and releases resources", async (t) => {
   const reading = getVideoDuration(env.file);
   const timeout = env.timers.values().next().value;
   timeout();
-  await assert.rejects(reading, /读取超时/);
+  await assert.rejects(reading, { code: "timeout" });
   env.assertCleaned();
 });
 

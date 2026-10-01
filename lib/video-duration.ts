@@ -44,6 +44,20 @@ export function formatDuration(duration: number): string {
     .join(":");
 }
 
+export type VideoReadErrorCode = "invalid-duration" | "unreadable" | "timeout";
+
+export class VideoDurationError extends Error {
+  constructor(public readonly code: VideoReadErrorCode) {
+    const descriptions = {
+      "invalid-duration": "无法获取有效时长，文件可能已损坏或格式不受支持。",
+      unreadable: "无法读取时长：文件可能损坏、缺少有效时长元数据，或格式不受浏览器支持。",
+      timeout: "读取超时，请重试或使用浏览器支持的视频格式。",
+    };
+    super(descriptions[code]);
+    this.name = "VideoDurationError";
+  }
+}
+
 /** Read metadata only; the detached video is never played or rendered. */
 export function getVideoDuration(file: File, signal?: AbortSignal): Promise<number> {
   if (/\.(mov|qt|m4v|f4v|avi|flv|rmvb|rm)$/i.test(file.name)) {
@@ -87,18 +101,14 @@ function getBrowserVideoDuration(file: File, signal?: AbortSignal): Promise<numb
 
     const onMetadata = () => {
       if (!Number.isFinite(video.duration) || video.duration < 0) {
-        finish(new Error("无法获取有效时长，文件可能已损坏或格式不受支持。"));
+        finish(new VideoDurationError("invalid-duration"));
       } else {
         finish();
       }
     };
-    const onError = () =>
-      finish(new Error("无法读取时长：文件可能损坏、缺少有效时长元数据，或格式不受浏览器支持。"));
+    const onError = () => finish(new VideoDurationError("unreadable"));
     const onAbort = () => finish(new DOMException("读取已取消", "AbortError"));
-    const timeout = window.setTimeout(
-      () => finish(new Error("读取超时，请重试或使用浏览器支持的视频格式。")),
-      30_000,
-    );
+    const timeout = window.setTimeout(() => finish(new VideoDurationError("timeout")), 30_000);
 
     video.preload = "metadata";
     video.addEventListener("loadedmetadata", onMetadata);
@@ -107,7 +117,7 @@ function getBrowserVideoDuration(file: File, signal?: AbortSignal): Promise<numb
     try {
       video.src = objectUrl;
     } catch {
-      finish(new Error("无法读取此视频文件。"));
+      finish(new VideoDurationError("unreadable"));
     }
   });
 }

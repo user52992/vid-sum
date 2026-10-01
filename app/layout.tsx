@@ -3,7 +3,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "视频总时长计算器",
+  title: "VidSum - 视频总时长计算器",
   description: "免费在线计算多个视频的总时长。视频无需上传服务器，直接在浏览器本地计算。",
 };
 

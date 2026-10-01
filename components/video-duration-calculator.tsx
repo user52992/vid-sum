@@ -12,7 +12,7 @@ type VideoFileItem = {
   error?: string;
 };
 type Result = { duration: number; success: number; failed: number };
-type IconName = "upload" | "file" | "clock" | "lock" | "arrow" | "close" | "check";
+type IconName = "upload" | "file" | "clock" | "lock" | "arrow" | "close";
 
 function Icon({ name, className = "size-5" }: { name: IconName; className?: string }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -42,7 +42,6 @@ function Icon({ name, className = "size-5" }: { name: IconName; className?: stri
     ),
     arrow: <path d="M4 12h16m-6-6 6 6-6 6" />,
     close: <path d="m6 6 12 12M6 18 18 6" />,
-    check: <path d="m5 12 4 4L19 6" />,
   };
   return (
     <svg
@@ -259,9 +258,6 @@ export default function VideoDurationCalculator() {
             <span id="upload-hint" className="mt-2 text-xs leading-6 text-stone-500">
               支持一次或分多次添加多个视频
             </span>
-            <span className="mt-5 rounded-md border border-stone-200 bg-white px-4 py-2 text-xs font-medium text-stone-600">
-              选择视频 <span className="ml-2 text-stone-400">+</span>
-            </span>
           </button>
         </div>
         <p className="mt-3 text-center text-[11px] leading-5 text-stone-500">
@@ -351,10 +347,6 @@ export default function VideoDurationCalculator() {
             ))}
           </ul>
         )}
-        <div className="mt-3 flex items-start gap-2 border-t border-stone-100 pt-5 text-[11px] leading-5 text-stone-500">
-          <Icon name="lock" className="mt-0.5 size-3.5 shrink-0 text-emerald-800" />
-          <p>视频文件不会上传到任何服务器，所有计算均在你的浏览器中完成。</p>
-        </div>
       </section>
 
       <aside className="min-w-0 lg:sticky lg:top-8" aria-label="计算与结果">
@@ -371,32 +363,22 @@ export default function VideoDurationCalculator() {
               视频总时长
             </p>
             <p
+              aria-label={`视频总时长 ${formatDuration(result?.duration ?? 0)}，格式为小时、分钟、秒`}
               className={`overflow-x-auto font-mono text-[clamp(2rem,8vw,3rem)] leading-tight font-medium tracking-[-0.06em] tabular-nums sm:text-5xl ${result ? "text-emerald-950" : "text-[#81988a]"}`}
             >
               {formatDuration(result?.duration ?? 0)}
             </p>
-            <p className="mt-3 font-mono text-[10px] tracking-[0.22em] text-emerald-900/50">
-              小时 : 分钟 : 秒钟
-            </p>
-            <div className="mt-6 min-h-10 text-xs leading-6 text-emerald-900/75">
-              {isCalculating ? (
-                <p>
-                  正在读取视频… {completed} / {items.length}
-                </p>
-              ) : result ? (
-                <p>
-                  {result.failed
-                    ? `已成功计算 ${result.success} 个视频，${result.failed} 个视频无法读取。`
-                    : `已成功计算 ${result.success} 个视频`}
-                </p>
-              ) : (
-                <p>
-                  添加视频后，点击下方按钮
-                  <br />
-                  即可查看总时长
-                </p>
-              )}
-            </div>
+            {(isCalculating || result) && (
+              <p className="mt-4 text-xs leading-6 text-emerald-900/75">
+                {isCalculating
+                  ? `正在读取视频… ${completed} / ${items.length}`
+                  : result
+                    ? result.failed
+                      ? `已成功计算 ${result.success} 个视频，${result.failed} 个视频无法读取。`
+                      : `已成功计算 ${result.success} 个视频`
+                    : null}
+              </p>
+            )}
           </div>
           <div className="mt-6 border-t border-emerald-900/10 pt-6">
             <button
@@ -418,22 +400,9 @@ export default function VideoDurationCalculator() {
             </button>
           </div>
         </section>
-        <div className="px-2 pt-6">
-          <p className="mb-3 text-xs font-medium text-stone-600">关于计算</p>
-          <ul className="space-y-2.5 text-[11px] leading-5 text-stone-500">
-            <li className="flex gap-2">
-              <Icon name="check" className="mt-0.5 size-3.5 shrink-0 text-emerald-700" />
-              只读取视频时长，无需播放视频
-            </li>
-            <li className="flex gap-2">
-              <Icon name="check" className="mt-0.5 size-3.5 shrink-0 text-emerald-700" />
-              总时长四舍五入到秒，支持超过 24 小时
-            </li>
-            <li className="flex gap-2">
-              <Icon name="check" className="mt-0.5 size-3.5 shrink-0 text-emerald-700" />
-              读取失败的文件会单独标记，不影响其他视频
-            </li>
-          </ul>
+        <div className="mt-6 flex items-start gap-2 px-2 text-[11px] leading-5 text-stone-500">
+          <Icon name="lock" className="mt-0.5 size-3.5 shrink-0 text-emerald-800" />
+          <p>视频文件不会上传到任何服务器，所有计算均在你的浏览器中完成。</p>
         </div>
       </aside>
     </div>

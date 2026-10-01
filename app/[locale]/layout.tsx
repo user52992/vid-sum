@@ -1,5 +1,6 @@
 import "../globals.css";
 
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { notFound } from "next/navigation";
 
 import { isLocale, locales, messages } from "@/lib/i18n";
@@ -21,6 +22,7 @@ export default async function LocaleLayout({ children, params }: Props) {
   return (
     <html lang={messages[locale].htmlLang} className="h-full antialiased">
       <body className="flex min-h-full flex-col">{children}</body>
+      <SpeedInsights />
     </html>
   );
 }
